@@ -120,19 +120,15 @@ async def set_reminder(callback_query: types.CallbackQuery):
     interval_key = callback_query.data
     interval_hours = INTERVALS[interval_key.replace("set_", "")]
 
-    # Время следующего напоминания (серверное - UTC)
     next_time = datetime.now() + timedelta(hours=interval_hours)
     
     # --- МОСКОВСКОЕ ВРЕМЯ (UTC+3) ---
     msk_time = next_time + timedelta(hours=3)
-    
-    # Форматируем для красивого отображения
     msk_time_str = msk_time.strftime('%H:%M %d.%m')
 
-    # Сохраняем задачу (всегда храним в UTC!)
     user_tasks[user_id] = {
         "chat_id": callback_query.message.chat.id,
-        "next_time": next_time,  # здесь всегда UTC
+        "next_time": next_time,
         "interval_hours": interval_hours
     }
 
@@ -173,11 +169,9 @@ async def reminder_scheduler():
                     phrase = random.choice(REMINDER_PHRASES)
                     await bot.send_message(chat_id=task_info["chat_id"], text=phrase)
 
-                    # Обновляем время следующего напоминания (UTC)
                     new_next_time = now + timedelta(hours=task_info["interval_hours"])
                     user_tasks[user_id]["next_time"] = new_next_time
                     
-                    # Для логов тоже покажем московское время
                     msk_time = new_next_time + timedelta(hours=3)
                     print(f"Отправлено напоминание пользователю {user_id}. Следующее по Москве: {msk_time.strftime('%H:%M %d.%m')}")
 
@@ -191,29 +185,18 @@ async def reminder_scheduler():
 
         await asyncio.sleep(30)
 
-# --- Обработчик для health check ---
+# --- ИСПРАВЛЕНО: Health check через существующий сервер ---
 async def handle_health(request):
     return web.Response(text="OK")
-
-# --- Запуск веб-сервера для health check ---
-async def run_health_server():
-    app = web.Application()
-    app.router.add_get("/health", handle_health)
-    
-    port = int(os.getenv("PORT", 10000))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🌐 Health check сервер запущен на порту {port}")
-    return runner
 
 # --- Функции для вебхука ---
 async def on_startup(dp):
     await bot.set_webhook(WEBHOOK_URL)
+    # Добавляем маршрут для health check в существующий сервер
+    dp['web_app'].router.add_get("/health", handle_health)
     # Запускаем планировщик напоминаний
     asyncio.create_task(reminder_scheduler())
-    print("✅ Бот запущен и готов к работе!")
+    print("✅ Бот запущен, health check доступен по /health")
 
 async def on_shutdown(dp):
     await bot.delete_webhook()
@@ -228,11 +211,7 @@ WEBAPP_PORT = int(os.getenv("PORT", 10000))
 
 # --- ТОЧКА ВХОДА ---
 if __name__ == "__main__":
-    # Запускаем health check сервер
-    loop = asyncio.get_event_loop()
-    loop.create_task(run_health_server())
-    
-    # Запускаем бота через вебхук
+    # Запускаем ТОЛЬКО один сервер - вебхук
     start_webhook(
         dispatcher=dp,
         webhook_path=WEBHOOK_PATH,
