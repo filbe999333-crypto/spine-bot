@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.executor import start_webhook
 from aiohttp import web
 
 # --- НАСТРОЙКИ ---
@@ -113,7 +112,7 @@ async def show_timer_menu(message: types.Message):
     )
     await message.answer("⏰ Напомнить мне выпрямить спину каждые:", reply_markup=keyboard)
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ---
+# --- ФУНКЦИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ---
 @dp.callback_query_handler(lambda c: c.data.startswith('set_'))
 async def set_reminder(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -122,7 +121,7 @@ async def set_reminder(callback_query: types.CallbackQuery):
 
     next_time = datetime.now() + timedelta(hours=interval_hours)
     
-    # --- МОСКОВСКОЕ ВРЕМЯ (UTC+3) ---
+    # МОСКОВСКОЕ ВРЕМЯ (UTC+3)
     msk_time = next_time + timedelta(hours=3)
     msk_time_str = msk_time.strftime('%H:%M %d.%m')
 
@@ -185,39 +184,32 @@ async def reminder_scheduler():
 
         await asyncio.sleep(30)
 
-# --- ИСПРАВЛЕНО: Health check через существующий сервер ---
+# --- ПРОСТОЙ HEALTH CHECK СЕРВЕР ---
 async def handle_health(request):
     return web.Response(text="OK")
 
-# --- Функции для вебхука ---
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
-    # Добавляем маршрут для health check в существующий сервер
-    dp['web_app'].router.add_get("/health", handle_health)
+async def run_health_server():
+    app = web.Application()
+    app.router.add_get("/health", handle_health)
+    
+    port = int(os.getenv("PORT", 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Health check сервер запущен на порту {port}")
+    return runner
+
+# --- ЗАПУСК ВСЕГО ВМЕСТЕ ---
+async def main():
+    # Запускаем health check сервер
+    await run_health_server()
+    
     # Запускаем планировщик напоминаний
     asyncio.create_task(reminder_scheduler())
-    print("✅ Бот запущен, health check доступен по /health")
+    
+    # Запускаем бота (polling)
+    await dp.start_polling()
 
-async def on_shutdown(dp):
-    await bot.delete_webhook()
-
-# --- Настройки вебхука ---
-WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL", "https://spine-bot.onrender.com")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
-
-WEBAPP_HOST = "0.0.0.0"
-WEBAPP_PORT = int(os.getenv("PORT", 10000))
-
-# --- ТОЧКА ВХОДА ---
 if __name__ == "__main__":
-    # Запускаем ТОЛЬКО один сервер - вебхук
-    start_webhook(
-        dispatcher=dp,
-        webhook_path=WEBHOOK_PATH,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host=WEBAPP_HOST,
-        port=WEBAPP_PORT
-    )
+    asyncio.run(main())
