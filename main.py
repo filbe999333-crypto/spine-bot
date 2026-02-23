@@ -112,7 +112,6 @@ async def show_timer_menu(message: types.Message):
     )
     await message.answer("⏰ Напомнить мне выпрямить спину каждые:", reply_markup=keyboard)
 
-# --- ФУНКЦИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ---
 @dp.callback_query_handler(lambda c: c.data.startswith('set_'))
 async def set_reminder(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -121,7 +120,7 @@ async def set_reminder(callback_query: types.CallbackQuery):
 
     next_time = datetime.now() + timedelta(hours=interval_hours)
     
-    # МОСКОВСКОЕ ВРЕМЯ (UTC+3)
+    # МОСКОВСКОЕ ВРЕМЯ
     msk_time = next_time + timedelta(hours=3)
     msk_time_str = msk_time.strftime('%H:%M %d.%m')
 
@@ -156,39 +155,46 @@ async def stop_reminders(callback_query: types.CallbackQuery):
     )
     await bot.answer_callback_query(callback_query.id)
 
-# --- Фоновая задача для рассылки напоминаний ---
+# --- ИСПРАВЛЕННЫЙ ПЛАНИРОВЩИК ---
 async def reminder_scheduler():
+    """Фоновая задача для рассылки напоминаний"""
+    print("🕒 Планировщик напоминаний ЗАПУЩЕН!")
     while True:
         now = datetime.now()
         to_remove = []
 
-        for user_id, task_info in user_tasks.items():
+        for user_id, task_info in list(user_tasks.items()):
             if now >= task_info["next_time"]:
                 try:
                     phrase = random.choice(REMINDER_PHRASES)
                     await bot.send_message(chat_id=task_info["chat_id"], text=phrase)
-
+                    
+                    # Обновляем время следующего напоминания
                     new_next_time = now + timedelta(hours=task_info["interval_hours"])
                     user_tasks[user_id]["next_time"] = new_next_time
                     
                     msk_time = new_next_time + timedelta(hours=3)
-                    print(f"Отправлено напоминание пользователю {user_id}. Следующее по Москве: {msk_time.strftime('%H:%M %d.%m')}")
+                    print(f"✅ Отправлено напоминание пользователю {user_id}. Следующее по Москве: {msk_time.strftime('%H:%M %d.%m')}")
 
                 except Exception as e:
-                    print(f"Ошибка отправки пользователю {user_id}: {e}")
+                    print(f"❌ Ошибка отправки пользователю {user_id}: {e}")
                     to_remove.append(user_id)
 
+        # Удаляем проблемных пользователей
         for user_id in to_remove:
             if user_id in user_tasks:
                 del user_tasks[user_id]
+                print(f"🗑️ Удален пользователь {user_id} из-за ошибок")
 
         await asyncio.sleep(30)
 
-# --- ПРОСТОЙ HEALTH CHECK СЕРВЕР ---
+# --- HEALTH CHECK ---
 async def handle_health(request):
     return web.Response(text="OK")
 
-async def run_health_server():
+# --- ЗАПУСК ВСЕГО ---
+async def main():
+    # Запускаем health check сервер
     app = web.Application()
     app.router.add_get("/health", handle_health)
     
@@ -198,17 +204,12 @@ async def run_health_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"🌐 Health check сервер запущен на порту {port}")
-    return runner
-
-# --- ЗАПУСК ВСЕГО ВМЕСТЕ ---
-async def main():
-    # Запускаем health check сервер
-    await run_health_server()
     
-    # Запускаем планировщик напоминаний
+    # Запускаем планировщик как отдельную задачу
     asyncio.create_task(reminder_scheduler())
     
-    # Запускаем бота (polling)
+    # Запускаем бота
+    print("🤖 Бот запускается...")
     await dp.start_polling()
 
 if __name__ == "__main__":
