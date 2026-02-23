@@ -2,6 +2,7 @@ import logging
 import random
 import asyncio
 import os
+import requests  # <-- Добавили для удаления вебхука
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
@@ -13,13 +14,25 @@ TOKEN = os.getenv("BOT_TOKEN", "8432200353:AAEE-YdcvRKTnU0FbAcASbNiFIVdbFR_bC8")
 CHANNEL_USERNAME = "@celebrityfunfacts"
 CHANNEL_ID = "@celebrityfunfacts"
 
+# === ВАЖНО! Убиваем старый вебхук перед запуском ===
+try:
+    url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
+    response = requests.get(url)
+    if response.status_code == 200:
+        print("🧹 Старый вебхук успешно удалён")
+    else:
+        print("⚠️ Не удалось удалить вебхук, но пробуем дальше")
+except Exception as e:
+    print(f"⚠️ Ошибка при удалении вебхука: {e}")
+# =================================================
+
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# Хранилище активных напоминаний: {user_id: {"chat_id": id, "next_time": datetime, "interval_hours": int}}
+# Хранилище активных напоминаний
 user_tasks = {}
 
 INTERVALS = {
@@ -114,13 +127,13 @@ async def stop_reminders(call: types.CallbackQuery):
     await call.message.edit_text(text)
     await call.answer()
 
-# --- ПЛАНИРОВЩИК РАССЫЛКИ (работает в фоне) ---
+# --- ПЛАНИРОВЩИК РАССЫЛКИ ---
 async def reminder_scheduler():
     print("✅ Планировщик запущен и работает!")
     while True:
         now = datetime.now()
         to_remove = []
-        for uid, task in user_tasks.items():
+        for uid, task in list(user_tasks.items()):
             if now >= task["next_time"]:
                 try:
                     phrase = random.choice(REMINDER_PHRASES)
@@ -133,7 +146,7 @@ async def reminder_scheduler():
             user_tasks.pop(uid, None)
         await asyncio.sleep(30)
 
-# --- HEALTH CHECK (чтобы Render не усыплял) ---
+# --- HEALTH CHECK ---
 async def handle_health(request):
     return web.Response(text="OK")
 
