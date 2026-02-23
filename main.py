@@ -13,18 +13,15 @@ TOKEN = os.getenv("BOT_TOKEN", "8432200353:AAEE-YdcvRKTnU0FbAcASbNiFIVdbFR_bC8")
 CHANNEL_USERNAME = "@celebrityfunfacts"
 CHANNEL_ID = "@celebrityfunfacts"
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Создаем объекты бота и диспетчера
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# Словарь для хранения активных задач пользователей
+# Хранилище активных напоминаний: {user_id: {"chat_id": id, "next_time": datetime, "interval_hours": int}}
 user_tasks = {}
 
-# Словарь с интервалами для кнопок
 INTERVALS = {
     "1h": 1,
     "5h": 5,
@@ -34,7 +31,6 @@ INTERVALS = {
     "24h": 24
 }
 
-# Список фраз для напоминаний
 REMINDER_PHRASES = [
     "🧘 Выпрями спину!",
     "⚠️ Не горбись!",
@@ -46,170 +42,113 @@ REMINDER_PHRASES = [
     "🎗️ Не сутулься, побереги позвоночник!"
 ]
 
-# Функция проверки подписки
 async def check_subscription(user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        if member['status'] in ['member', 'administrator', 'creator']:
-            return True
-        else:
-            return False
-    except Exception as e:
-        print(f"Ошибка проверки подписки для {user_id}: {e}")
+        return member['status'] in ['member', 'administrator', 'creator']
+    except:
         return False
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-    user_name = message.from_user.first_name
-
-    is_subscribed = await check_subscription(user_id)
-
-    if is_subscribed:
+    if await check_subscription(user_id):
         await show_timer_menu(message)
     else:
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        keyboard.add(
+        keyboard = InlineKeyboardMarkup(row_width=1).add(
             InlineKeyboardButton(text="📢 Подписаться на канал", url=f"https://t.me/celebrityfunfacts"),
             InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")
         )
         await message.answer(
-            f"Привет, {user_name}!\n\n"
-            f"Для использования бота нужно подписаться на наш канал: {CHANNEL_USERNAME}\n\n"
-            f"👉 После подписки нажми кнопку 'Я подписался'.",
+            f"Привет, {message.from_user.first_name}!\n\nПодпишись на {CHANNEL_USERNAME} и нажми кнопку.",
             reply_markup=keyboard
         )
 
 @dp.callback_query_handler(lambda c: c.data == 'check_sub')
-async def process_sub_check(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    is_subscribed = await check_subscription(user_id)
-
-    if is_subscribed:
-        await bot.edit_message_text(
-            "✅ Спасибо! Подписка подтверждена. Выбирай интервал:",
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.message_id
-        )
-        await show_timer_menu(callback_query.message)
+async def process_sub_check(callback: types.CallbackQuery):
+    if await check_subscription(callback.from_user.id):
+        await callback.message.edit_text("✅ Спасибо! Выбирай интервал:")
+        await show_timer_menu(callback.message)
     else:
-        await bot.answer_callback_query(
-            callback_query.id,
-            text="❌ Вы еще не подписались на канал!",
-            show_alert=True
-        )
+        await callback.answer("❌ Ты не подписан!", show_alert=True)
 
 async def show_timer_menu(message: types.Message):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
+    keyboard = InlineKeyboardMarkup(row_width=2).add(
         InlineKeyboardButton(text="1 час", callback_data="set_1h"),
         InlineKeyboardButton(text="5 часов", callback_data="set_5h"),
         InlineKeyboardButton(text="10 часов", callback_data="set_10h"),
         InlineKeyboardButton(text="15 часов", callback_data="set_15h"),
         InlineKeyboardButton(text="20 часов", callback_data="set_20h"),
         InlineKeyboardButton(text="24 часа", callback_data="set_24h"),
-        InlineKeyboardButton(text="❌ Выключить напоминания", callback_data="stop_reminders")
+        InlineKeyboardButton(text="❌ Выключить", callback_data="stop_reminders")
     )
-    await message.answer("⏰ Напомнить мне выпрямить спину каждые:", reply_markup=keyboard)
+    await message.answer("⏰ Напоминать каждые:", reply_markup=keyboard)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('set_'))
-async def set_reminder(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    interval_key = callback_query.data
-    interval_hours = INTERVALS[interval_key.replace("set_", "")]
-
-    next_time = datetime.now() + timedelta(hours=interval_hours)
-    
-    # МОСКОВСКОЕ ВРЕМЯ
+async def set_reminder(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    hours = INTERVALS[call.data.replace("set_", "")]
+    next_time = datetime.now() + timedelta(hours=hours)
     msk_time = next_time + timedelta(hours=3)
-    msk_time_str = msk_time.strftime('%H:%M %d.%m')
 
     user_tasks[user_id] = {
-        "chat_id": callback_query.message.chat.id,
+        "chat_id": call.message.chat.id,
         "next_time": next_time,
-        "interval_hours": interval_hours
+        "interval_hours": hours
     }
 
-    await bot.edit_message_text(
-        f"✅ Напоминание установлено!\n"
-        f"Я буду напоминать тебе каждые {interval_hours} час(ов).\n"
-        f"🇷🇺 Первое напоминание по МОСКВЕ: {msk_time_str}",
-        chat_id=callback_query.message.chat.id,
-        message_id=callback_query.message.message_id
+    await call.message.edit_text(
+        f"✅ Напоминание каждые {hours} ч.\n"
+        f"🇷🇺 Первое по Москве: {msk_time.strftime('%H:%M %d.%m')}"
     )
-    await bot.answer_callback_query(callback_query.id)
+    await call.answer()
 
 @dp.callback_query_handler(lambda c: c.data == 'stop_reminders')
-async def stop_reminders(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
+async def stop_reminders(call: types.CallbackQuery):
+    user_id = call.from_user.id
     if user_id in user_tasks:
         del user_tasks[user_id]
-        text = "🔕 Напоминания отключены. Чтобы включить заново, нажми /start"
+        text = "🔕 Напоминания отключены"
     else:
-        text = "🤷 У тебя не было активных напоминаний."
+        text = "🤷 Нет активных напоминаний"
+    await call.message.edit_text(text)
+    await call.answer()
 
-    await bot.edit_message_text(
-        text,
-        chat_id=callback_query.message.chat.id,
-        message_id=callback_query.message.message_id
-    )
-    await bot.answer_callback_query(callback_query.id)
-
-# --- ИСПРАВЛЕННЫЙ ПЛАНИРОВЩИК ---
+# --- ПЛАНИРОВЩИК РАССЫЛКИ (работает в фоне) ---
 async def reminder_scheduler():
-    """Фоновая задача для рассылки напоминаний"""
-    print("🕒 Планировщик напоминаний ЗАПУЩЕН!")
+    print("✅ Планировщик запущен и работает!")
     while True:
         now = datetime.now()
         to_remove = []
-
-        for user_id, task_info in list(user_tasks.items()):
-            if now >= task_info["next_time"]:
+        for uid, task in user_tasks.items():
+            if now >= task["next_time"]:
                 try:
                     phrase = random.choice(REMINDER_PHRASES)
-                    await bot.send_message(chat_id=task_info["chat_id"], text=phrase)
-                    
-                    # Обновляем время следующего напоминания
-                    new_next_time = now + timedelta(hours=task_info["interval_hours"])
-                    user_tasks[user_id]["next_time"] = new_next_time
-                    
-                    msk_time = new_next_time + timedelta(hours=3)
-                    print(f"✅ Отправлено напоминание пользователю {user_id}. Следующее по Москве: {msk_time.strftime('%H:%M %d.%m')}")
-
-                except Exception as e:
-                    print(f"❌ Ошибка отправки пользователю {user_id}: {e}")
-                    to_remove.append(user_id)
-
-        # Удаляем проблемных пользователей
-        for user_id in to_remove:
-            if user_id in user_tasks:
-                del user_tasks[user_id]
-                print(f"🗑️ Удален пользователь {user_id} из-за ошибок")
-
+                    await bot.send_message(chat_id=task["chat_id"], text=phrase)
+                    task["next_time"] = now + timedelta(hours=task["interval_hours"])
+                    print(f"✓ Напоминание отправлено {uid}")
+                except:
+                    to_remove.append(uid)
+        for uid in to_remove:
+            user_tasks.pop(uid, None)
         await asyncio.sleep(30)
 
-# --- HEALTH CHECK ---
+# --- HEALTH CHECK (чтобы Render не усыплял) ---
 async def handle_health(request):
     return web.Response(text="OK")
 
-# --- ЗАПУСК ВСЕГО ---
-async def main():
-    # Запускаем health check сервер
+async def run_health_server():
     app = web.Application()
     app.router.add_get("/health", handle_health)
-    
-    port = int(os.getenv("PORT", 10000))
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🌐 Health check сервер запущен на порту {port}")
-    
-    # Запускаем планировщик как отдельную задачу
+    await web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000))).start()
+    print("🌐 Health check сервер запущен")
+
+# --- ТОЧКА ВХОДА ---
+async def main():
+    await run_health_server()
     asyncio.create_task(reminder_scheduler())
-    
-    # Запускаем бота
-    print("🤖 Бот запускается...")
     await dp.start_polling()
 
 if __name__ == "__main__":
